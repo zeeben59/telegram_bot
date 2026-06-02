@@ -697,43 +697,47 @@ app.get('/users/:id/tasks', async (req, res) => {
   }
 });
 const HTTP_PORT = process.env.PORT || 3000;
-app.listen(HTTP_PORT, () => { if (!SILENT_LOGS) console.log('Express API listening on port', HTTP_PORT); });
+if (require.main === module) {
+  app.listen(HTTP_PORT, () => { if (!SILENT_LOGS) console.log('Express API listening on port', HTTP_PORT); });
+}
 
 // Daily scheduler: generate one personalized daily task message per user at 08:00 server time
-cron.schedule('0 8 * * *', async () => {
-  try {
-    if (!SILENT_LOGS) console.log('Running daily task generator...');
-    const users = await db.getAllUsers();
-    for (const u of users) {
-      try {
-        const userId = u.id;
-        const profile = await db.getProfile(userId) || {};
-        const recent = await db.getRecentMessages(userId, 40);
-        const convoText = recent.map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`).join('\n');
-        const prompt = `You are AI_Coach. Create ONE daily mission for a university student based on this profile: ${JSON.stringify(profile)}. The mission must align with the student's long-term career_goal and future_vision, respect their study_hours, and be appropriate for their year and department. Also produce 3 small tasks (category, one-line instruction, estimated minutes). Conversation context:\n${convoText}`;
-        const resp = await openai.responses.create({ model: 'gpt-4.1-mini', input: prompt, max_output_tokens: 300, temperature: 0.12 });
-        let text = resp.output_text || (Array.isArray(resp.output) && resp.output.map(b=>b.content?.map(c=>c.text||'').join('')).join('\n')) || '';
-        text = await ensureHumanTone(text);
-        // save message and tasks
-        await db.saveMessage(userId, 'assistant', text);
-        const parsed = parseTasksFromText(text);
-        for (const t of parsed) await db.saveTask(userId, t);
-        // Only send if the user allows daily tasks (preference)
+if (require.main === module) {
+  cron.schedule('0 8 * * *', async () => {
+    try {
+      if (!SILENT_LOGS) console.log('Running daily task generator...');
+      const users = await db.getAllUsers();
+      for (const u of users) {
         try {
-          const prefs = profile && profile.show_tasks_by_default === false ? { show: false } : { show: true };
-          if (prefs.show) {
-            const chatId = Number(userId) || userId;
-            await bot.telegram.sendMessage(chatId, text);
-          } else {
-            if (!SILENT_LOGS) console.log('Skipping daily task send for', userId, 'due to preference');
+          const userId = u.id;
+          const profile = await db.getProfile(userId) || {};
+          const recent = await db.getRecentMessages(userId, 40);
+          const convoText = recent.map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`).join('\n');
+          const prompt = `You are AI_Coach. Create ONE daily mission for a university student based on this profile: ${JSON.stringify(profile)}. The mission must align with the student's long-term career_goal and future_vision, respect their study_hours, and be appropriate for their year and department. Also produce 3 small tasks (category, one-line instruction, estimated minutes). Conversation context:\n${convoText}`;
+          const resp = await openai.responses.create({ model: 'gpt-4.1-mini', input: prompt, max_output_tokens: 300, temperature: 0.12 });
+          let text = resp.output_text || (Array.isArray(resp.output) && resp.output.map(b=>b.content?.map(c=>c.text||'').join('')).join('\n')) || '';
+          text = await ensureHumanTone(text);
+          // save message and tasks
+          await db.saveMessage(userId, 'assistant', text);
+          const parsed = parseTasksFromText(text);
+          for (const t of parsed) await db.saveTask(userId, t);
+          // Only send if the user allows daily tasks (preference)
+          try {
+            const prefs = profile && profile.show_tasks_by_default === false ? { show: false } : { show: true };
+            if (prefs.show) {
+              const chatId = Number(userId) || userId;
+              await bot.telegram.sendMessage(chatId, text);
+            } else {
+              if (!SILENT_LOGS) console.log('Skipping daily task send for', userId, 'due to preference');
+            }
+          } catch (e) {
+            if (!SILENT_LOGS) console.warn('Could not send daily task to', userId, e && e.message ? e.message : e);
           }
-        } catch (e) {
-          if (!SILENT_LOGS) console.warn('Could not send daily task to', userId, e && e.message ? e.message : e);
-        }
-      } catch (e) { console.error('Failed to generate/send daily task for user', u, e); }
-    }
-  } catch (e) { console.error('Daily task scheduler failed:', e); }
-}, { scheduled: true, timezone: process.env.TIMEZONE || 'UTC' });
+        } catch (e) { console.error('Failed to generate/send daily task for user', u, e); }
+      }
+    } catch (e) { console.error('Daily task scheduler failed:', e); }
+  }, { scheduled: true, timezone: process.env.TIMEZONE || 'UTC' });
+}
 
 // Global error handling
 bot.catch((err) => {
@@ -766,14 +770,16 @@ if (require.main === module) {
 
 module.exports = { bot, db, start };
 
-// Graceful shutdown
-process.once('SIGINT', () => {
-  console.log('SIGINT received, stopping bot...');
-  bot.stop('SIGINT');
-  process.exit(0);
-});
-process.once('SIGTERM', () => {
-  console.log('SIGTERM received, stopping bot...');
-  bot.stop('SIGTERM');
-  process.exit(0);
-});
+// Graceful shutdown (only when run directly)
+if (require.main === module) {
+  process.once('SIGINT', () => {
+    console.log('SIGINT received, stopping bot...');
+    bot.stop('SIGINT');
+    process.exit(0);
+  });
+  process.once('SIGTERM', () => {
+    console.log('SIGTERM received, stopping bot...');
+    bot.stop('SIGTERM');
+    process.exit(0);
+  });
+}
