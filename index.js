@@ -740,9 +740,8 @@ bot.catch((err) => {
   console.error('Bot error:', err);
 });
 
-// Start the bot
-// Launch the bot and log detailed progress so we can see where it stops.
-(async () => {
+// Start the bot (only when run directly). Export `bot` for serverless webhook handlers.
+async function start() {
   try {
     if (!SILENT_LOGS) console.log('Initializing database...');
     try { await db.init(); if (!SILENT_LOGS) console.log('Database initialized.'); } catch (e) { console.error('DB init failed:', e); }
@@ -757,10 +756,15 @@ bot.catch((err) => {
     }
   } catch (err) {
     console.error('Failed to launch bot:', err && err.stack ? err.stack : err);
-    // don't exit immediately so user can see logs in some environments; still exit with failure
     process.exit(1);
   }
-})();
+}
+
+if (require.main === module) {
+  start();
+}
+
+module.exports = { bot, db, start };
 
 // Graceful shutdown
 process.once('SIGINT', () => {
